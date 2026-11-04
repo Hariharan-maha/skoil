@@ -38,11 +38,11 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 let ready=false,dbErr='';
 async function api(m,u,b){const r=await fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined,credentials:'same-origin'});let d={};try{d=await r.json()}catch(e){}if(!r.ok){const e=new Error(d.error||'Error');e.status=r.status;throw e}return d}
 function save(){api('POST','/api/config',{oils:S.oils,sizes:S.sizes,brands:S.brands}).catch(e=>alert('Save failed: '+e.message))}
-async function refresh(){try{const d=await api('GET','/api/state');S.oils=d.oils;S.sizes=d.sizes;S.brands=d.brands;S.tx=d.tx;S.users=d.users;me=d.me;ready=true;dbErr='';softRender()}catch(e){ready=true;if(e.status===401){me=null;render()}else if(!me){dbErr='Cannot reach server';render()}}}
+async function refresh(){try{const d=await api('GET','/api/state');S.oils=d.oils;S.sizes=d.sizes;S.brands=d.brands;S.tx=d.tx;S.reqs=d.reqs||[];S.users=d.users;me=d.me;ready=true;dbErr='';softRender()}catch(e){ready=true;if(e.status===401){me=null;render()}else if(!me){dbErr='Cannot reach server';render()}}}
 async function logout(){try{await api('POST','/api/logout')}catch(e){}me=null;render()}
 function softRender(){const a=document.activeElement;if(me&&a&&a.tagName==='INPUT'&&a.type!=='checkbox'&&a.value)return;render()}
-let S={users:[],oils:[],sizes:[],brands:{},tx:[]};
-let me=null,tab='dash',msg='',f={date:todayStr(),q:'',all:false,oil:'',brand:'',pack:'PET',size:'',n:'',mrp:'',type:'P',pk:''};
+let S={users:[],oils:[],sizes:[],brands:{},tx:[],reqs:[]};
+let me=null,tab='dash',msg='',f={date:todayStr(),q:'',all:false,oil:'',brand:'',pack:'PET',size:'',n:'',mrp:'',type:'P',pk:'',r:{o:'',b:'',p:'PET',s:'',n:'',due:'',pri:'Normal',note:''}};
 const PACKS=['PET','Pouch'];
 const key=(o,b,p,s)=>o+'|'+b+'|'+p+'|'+s;
 const curSize=()=>S.sizes.includes(f.size)?f.size:S.sizes[0];
@@ -61,15 +61,48 @@ function render(){const A=document.getElementById('app');
  if(!me){A.innerHTML=`<div id="login"><div class="card"><h1>Oil Stock Manager</h1><p class="mu">Login to continue</p>
  <label>Username</label><input id="lu" autocomplete="username"><br><br><label>Password</label><input id="lp" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()"><br><br>
  <button class="btn p" style="width:100%" onclick="login()">Login</button>${msg?`<div class="msg neg">${esc(msg)}</div>`:''}</div></div>`;return}
+ document.title=(openReqs().length?'('+openReqs().length+') ':'')+'Oil Stock Manager';
  const adm=me.role==='admin';
- const tabs=[['dash','Dashboard'],['entry','Entry'],['report','Daily Report'],['stock','Stock / Search']].concat(adm?[['master','Masters']]:[]);
+ const tabs=[['dash','Dashboard'],['req','Requests'+(openReqs().length?' ('+openReqs().length+')':'')],['entry','Entry'],['report','Daily Report'],['stock','Stock / Search']].concat(adm?[['master','Masters']]:[]);
  A.innerHTML=`<header><h1>🛢️ Oil Stock Manager</h1><div>${esc(me.u)} (${me.role}) <button class="btn" onclick="logout()">Logout</button></div></header>
  <nav>${tabs.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="tab='${t[0]}';msg='';render()">${t[1]}</button>`).join('')}</nav>
- <main>${({dash,entry,report,stock,master})[tab]()}</main>`}
+ <main>${({dash,req,entry,report,stock,master})[tab]()}</main>`}
+const isOff=()=>me&&(me.role==='admin'||me.role==='office');
+const openReqs=()=>S.reqs.filter(r=>r.status==='open'||r.status==='inprogress');
+const stLabel={open:'New',inprogress:'In progress',done:'Done',cancelled:'Cancelled'};
+function reqDone(r){const live=r.status==='open'||r.status==='inprogress';return S.tx.reduce((a,t)=>a+((t.k==='P'&&t.o===r.o&&t.b===r.b&&(t.p||'PET')===r.p&&t.s===r.s&&t.at>=r.at&&(live||t.at<=r.upd))?t.n:0),0)}
+const fmtT=ms=>{const d=new Date(ms);return d.getDate()+'/'+(d.getMonth()+1)+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+function reqCard(){const o=openReqs();if(!o.length)return '';
+ const l=o.slice().sort((a,b)=>(a.pri===b.pri?0:a.pri==='Urgent'?-1:1)||a.at-b.at).slice(0,6);
+ return `<div class="card" style="border-color:var(--ac)"><h2>Production requests from office (${o.length} pending)</h2><div class="wrap"><table><thead><tr><th>Item</th><th>Pack / Size</th><th>Need (boxes)</th><th>Done so far</th><th>Needed by</th></tr></thead><tbody>
+ ${l.map(r=>`<tr><td>${r.pri==='Urgent'?'<b class="neg">URGENT</b> ':''}${esc(r.o)} - ${esc(r.b)}</td><td>${r.p} ${esc(r.s)}</td><td><b>${r.n}</b></td><td class="${reqDone(r)>=r.n?'pos':''}">${reqDone(r)}</td><td>${esc(r.due||'')}</td></tr>`).join('')}</tbody></table></div>
+ <p><button class="btn p" onclick="tab='req';render()">Open Requests</button></p></div>`}
+function sendReq(){const R=f.r,s=S.sizes.includes(R.s)?R.s:S.sizes[0],n=parseInt(R.n,10);
+ if(!R.o||!R.b||R.o==='-- select --'||R.b==='-- select --'){msg='Select oil and brand';return render()}
+ if(!(n>0)){msg='Enter boxes needed';return render()}
+ api('POST','/api/req',{o:R.o,b:R.b,p:R.p,s,n,due:R.due,pri:R.pri,note:R.note}).then(()=>{msg='Request sent to production team';f.r.n='';f.r.note='';return refresh()}).then(()=>render()).catch(e=>alert(e.message))}
+function reqAct(id,st){api('POST','/api/req/'+id+'/status',{status:st}).then(refresh).catch(e=>alert(e.message))}
+function reqDel(id){if(confirm('Delete this request?'))api('DELETE','/api/req/'+id).then(refresh).catch(e=>alert(e.message))}
+function req(){const R=f.r,brands=S.brands[R.o]||[],size=S.sizes.includes(R.s)?R.s:S.sizes[0];
+ const live=r=>r.status==='open'||r.status==='inprogress';
+ const list=S.reqs.slice().sort((a,b)=>(live(b)-live(a))||(live(a)&&a.pri!==b.pri?(a.pri==='Urgent'?-1:1):0)||b.at-a.at).slice(0,60);
+ const form=isOff()?`<div class="card"><h2>Send production request</h2>
+ <div class="row"><div><label>Oil</label><select onchange="f.r.o=this.value;f.r.b='';render()">${opts(['-- select --'].concat(S.oils),R.o)}</select></div>
+ <div><label>Brand</label><select onchange="f.r.b=this.value">${opts(['-- select --'].concat(brands),R.b)}</select></div>
+ <div><label>Pack</label><select onchange="f.r.p=this.value">${opts(PACKS,R.p)}</select></div>
+ <div><label>Size</label><select onchange="f.r.s=this.value">${opts(S.sizes,size)}</select></div></div><br>
+ <div class="row"><div><label>Boxes needed</label><input type="number" min="1" value="${esc(R.n)}" oninput="f.r.n=this.value"></div>
+ <div><label>Needed by</label><input type="date" value="${R.due}" onchange="f.r.due=this.value"></div>
+ <div><label>Priority</label><select onchange="f.r.pri=this.value">${opts(['Normal','Urgent'],R.pri)}</select></div>
+ <div style="flex:2;min-width:200px"><label>Note to production team (optional)</label><input value="${esc(R.note)}" oninput="f.r.note=this.value"></div></div><br>
+ <button class="btn p" onclick="sendReq()">Send to production</button>${msg?`<div class="msg">${esc(msg)}</div>`:''}</div>`:'';
+ return form+`<div class="card"><h2>Requests</h2><div class="wrap"><table><thead><tr><th>Sent</th><th>Item</th><th>Pack / Size</th><th>Need</th><th>Produced</th><th>Needed by</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>
+ ${list.map(r=>{const d=reqDone(r);return `<tr><td>${fmtT(r.at)}<br><span class="mu">${esc(r.by)}</span></td><td>${r.pri==='Urgent'?'<b class="neg">URGENT</b> ':''}${esc(r.o)} - ${esc(r.b)}</td><td>${r.p} ${esc(r.s)}</td><td><b>${r.n}</b></td><td class="${d>=r.n?'pos':''}">${d}</td><td>${esc(r.due||'')}</td><td>${stLabel[r.status]}</td><td style="white-space:normal;min-width:120px">${esc(r.note||'')}</td>
+ <td>${r.status==='open'?`<button class="btn" onclick="reqAct('${esc(r.id)}','inprogress')">Start</button> `:''}${live(r)?`<button class="btn p" onclick="reqAct('${esc(r.id)}','done')">Done</button> `:''}${isOff()&&live(r)?`<button class="btn d" onclick="reqAct('${esc(r.id)}','cancelled')">Cancel</button> `:''}${isOff()?`<button class="btn d" onclick="reqDel('${esc(r.id)}')">x</button>`:''}</td></tr>`}).join('')||'<tr><td colspan="9" class="mu">No requests</td></tr>'}</tbody></table></div></div>`}
 function dash(){const d=todayStr(),m=agg(d),r=Object.values(m);const sum=k=>r.reduce((a,x)=>a+x[k],0);
  const byOil=[];S.oils.forEach(o=>PACKS.forEach(p=>{const x=r.filter(a=>a.o===o&&a.p===p);if(!x.length)return;const t=k=>x.reduce((a,b)=>a+b[k],0);byOil.push({o,p,open:t('open'),prod:t('prod'),sale:t('sale'),close:t('close')})}));
  const byPack=PACKS.map(p=>{const x=r.filter(a=>a.p===p);return {p,close:x.reduce((a,b)=>a+b.close,0)}});
- return `<div class="card"><h2>Today (${d})</h2><div class="grid">
+ return `${reqCard()}<div class="card"><h2>Today (${d})</h2><div class="grid">
  <div class="stat"><span>Opening</span><b>${sum('open')}</b></div><div class="stat"><span>Production</span><b>${sum('prod')}</b></div>
  <div class="stat"><span>Sold / Dispatched</span><b>${sum('sale')}</b></div><div class="stat"><span>Closing</span><b>${sum('close')}</b></div>
  ${byPack.map(x=>`<div class="stat"><span>${x.p} closing</span><b>${x.close}</b></div>`).join('')}</div>
@@ -135,7 +168,7 @@ function master(){const sel=f.mo&&S.oils.includes(f.mo)?f.mo:S.oils[0];
  <div><label>New size (e.g. 2 L)</label><input id="ns"></div><div style="flex:0"><button class="btn" onclick="addS()">Add size</button></div></div>
  <p class="mu">Oils: ${S.oils.map(esc).join(', ')}<br>Sizes: ${S.sizes.map(esc).join(', ')}</p></div>
  <div class="card"><h2>Users</h2><div class="row"><div><label>Username</label><input id="nu"></div><div><label>Password</label><input id="np"></div>
- <div><label>Role</label><select id="nr"><option>employee</option><option>admin</option></select></div><div style="flex:0"><button class="btn p" onclick="addU()">Add / update</button></div></div>
+ <div><label>Role</label><select id="nr"><option>employee</option><option>office</option><option>admin</option></select></div><div style="flex:0"><button class="btn p" onclick="addU()">Add / update</button></div></div>
  <div class="wrap"><table><thead><tr><th>User</th><th>Role</th><th></th></tr></thead><tbody>${S.users.map(u=>`<tr><td>${esc(u.u)}</td><td>${u.role}</td><td>${u.u!==me.u?`<button class="btn d" onclick="delU('${esc(u.u).replace(/'/g,'')}')">x</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`}
 function addB(o){const v=document.getElementById('nb').value.trim();if(!v)return;(S.brands[o]=S.brands[o]||[]);if(!S.brands[o].includes(v))S.brands[o].push(v);save();render()}
 function delB(o,b){S.brands[o]=(S.brands[o]||[]).filter(x=>x!==b);save();render()}
