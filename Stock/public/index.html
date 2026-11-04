@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Oil Stock Manager</title>
+<style>
+:root{--bg:#faf7f0;--card:#fff;--tx:#2a2418;--mu:#7a705c;--ac:#b8780a;--ac2:#fff;--bd:#e6dfcd;--ok:#2e7d32;--bad:#c62828;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1812;--card:#26221a;--tx:#f1ead9;--mu:#a99f88;--ac:#e0a030;--ac2:#1b1812;--bd:#3a3427;--ok:#66bb6a;--bad:#ef5350;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1b1812;--card:#26221a;--tx:#f1ead9;--mu:#a99f88;--ac:#e0a030;--ac2:#1b1812;--bd:#3a3427;--ok:#66bb6a;--bad:#ef5350;color-scheme:dark}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--bd);flex-wrap:wrap;gap:8px}
+h1{font-size:18px;margin:0}h2{font-size:16px;margin:0 0 10px}
+nav{display:flex;gap:6px;padding:10px 16px;overflow-x:auto}
+nav button,.btn{border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 14px;border-radius:8px;cursor:pointer;font:inherit;white-space:nowrap}
+nav button.on,.btn.p{background:var(--ac);color:var(--ac2);border-color:var(--ac)}
+.btn.d{color:var(--bad)}
+main{padding:0 16px 40px;max-width:1100px;margin:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+label{display:block;font-size:12px;color:var(--mu);margin-bottom:3px}
+input,select{width:100%;padding:9px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+.stat{padding:12px;border:1px solid var(--bd);border-radius:10px}.stat b{display:block;font-size:22px}.stat span{color:var(--mu);font-size:12px}
+.wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:560px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--bd);text-align:right;white-space:nowrap}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+th{font-size:12px;color:var(--mu)}tfoot td{font-weight:700}
+.pos{color:var(--ok)}.neg{color:var(--bad)}.mu{color:var(--mu)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:end}.row>div{flex:1;min-width:130px}
+.chip{display:inline-block;padding:3px 10px;border:1px solid var(--bd);border-radius:99px;margin:2px;font-size:13px}
+#login{max-width:340px;margin:12vh auto;padding:0 16px}
+.msg{padding:8px 12px;border-radius:8px;margin-top:10px;background:var(--bg);border:1px solid var(--bd)}
+</style></head><body>
+<div id="app"></div>
+<script>
+const KEY='oilstock_v1';
+const todayStr=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let ready=false,dbErr='';
+async function api(m,u,b){const r=await fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined,credentials:'same-origin'});let d={};try{d=await r.json()}catch(e){}if(!r.ok){const e=new Error(d.error||'Error');e.status=r.status;throw e}return d}
+function save(){api('POST','/api/config',{oils:S.oils,sizes:S.sizes,brands:S.brands}).catch(e=>alert('Save failed: '+e.message))}
+async function refresh(){try{const d=await api('GET','/api/state');S.oils=d.oils;S.sizes=d.sizes;S.brands=d.brands;S.tx=d.tx;S.users=d.users;me=d.me;ready=true;dbErr='';softRender()}catch(e){ready=true;if(e.status===401){me=null;render()}else if(!me){dbErr='Cannot reach server';render()}}}
+async function logout(){try{await api('POST','/api/logout')}catch(e){}me=null;render()}
+function softRender(){const a=document.activeElement;if(me&&a&&a.tagName==='INPUT'&&a.type!=='checkbox'&&a.value)return;render()}
+let S={users:[],oils:[],sizes:[],brands:{},tx:[]};
+let me=null,tab='dash',msg='',f={date:todayStr(),q:'',all:false,oil:'',brand:''};
+const key=(o,b,s)=>o+'|'+b+'|'+s;
+function agg(date){ // returns map key -> {o,b,s,open,prod,sale,close}
+ const m={};
+ const get=(t)=>{const k=key(t.o,t.b,t.s);return m[k]||(m[k]={o:t.o,b:t.b,s:t.s,open:0,prod:0,sale:0,close:0})};
+ S.tx.forEach(t=>{const r=get(t);const sg=t.k==='P'?t.n:-t.n;
+  if(t.d<date)r.open+=sg;else if(t.d===date){t.k==='P'?r.prod+=t.n:r.sale+=t.n}});
+ Object.values(m).forEach(r=>r.close=r.open+r.prod-r.sale);return m}
+function stockOf(o,b,s){let n=0;S.tx.forEach(t=>{if(t.o===o&&t.b===b&&t.s===s)n+=t.k==='P'?t.n:-t.n});return n}
+async function login(){const u=document.getElementById('lu').value.trim(),p=document.getElementById('lp').value;
+ try{await api('POST','/api/login',{u,p});msg='';await refresh();tab='dash';render()}catch(e){msg=e.message;render()}}
+function render(){const A=document.getElementById('app');
+ if(!ready){A.innerHTML=`<div id="login"><div class="card"><h1>Oil Stock Manager</h1><p class="${dbErr?'neg':'mu'}">${esc(dbErr||'Connecting to shared data...')}</p></div></div>`;return}
+ if(!me){A.innerHTML=`<div id="login"><div class="card"><h1>Oil Stock Manager</h1><p class="mu">Login to continue</p>
+ <label>Username</label><input id="lu" autocomplete="username"><br><br><label>Password</label><input id="lp" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()"><br><br>
+ <button class="btn p" style="width:100%" onclick="login()">Login</button>${msg?`<div class="msg neg">${esc(msg)}</div>`:''}</div></div>`;return}
+ const adm=me.role==='admin';
+ const tabs=[['dash','Dashboard'],['entry','Entry'],['report','Daily Report'],['stock','Stock / Search']].concat(adm?[['master','Masters']]:[]);
+ A.innerHTML=`<header><h1>🛢️ Oil Stock Manager</h1><div>${esc(me.u)} (${me.role}) <button class="btn" onclick="logout()">Logout</button></div></header>
+ <nav>${tabs.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="tab='${t[0]}';msg='';render()">${t[1]}</button>`).join('')}</nav>
+ <main>${({dash,entry,report,stock,master})[tab]()}</main>`}
+function dash(){const d=todayStr(),m=agg(d),r=Object.values(m);const sum=k=>r.reduce((a,x)=>a+x[k],0);
+ const byOil=S.oils.map(o=>{const x=r.filter(a=>a.o===o);return{o,open:x.reduce((a,b)=>a+b.open,0),prod:x.reduce((a,b)=>a+b.prod,0),sale:x.reduce((a,b)=>a+b.sale,0),close:x.reduce((a,b)=>a+b.close,0)}});
+ return `<div class="card"><h2>Today (${d})</h2><div class="grid">
+ <div class="stat"><span>Opening</span><b>${sum('open')}</b></div><div class="stat"><span>Production</span><b>${sum('prod')}</b></div>
+ <div class="stat"><span>Sold / Dispatched</span><b>${sum('sale')}</b></div><div class="stat"><span>Closing</span><b>${sum('close')}</b></div></div>
+ <p class="mu">All numbers are in boxes.</p></div>
+ <div class="card"><h2>By oil</h2><div class="wrap"><table><thead><tr><th>Oil</th><th></th><th>Opening</th><th>Production</th><th>Sale</th><th>Closing</th></tr></thead><tbody>
+ ${byOil.map(x=>`<tr><td>${esc(x.o)}</td><td></td><td>${x.open}</td><td>${x.prod}</td><td>${x.sale}</td><td><b>${x.close}</b></td></tr>`).join('')}</tbody></table></div></div>`}
+function opts(a,sel){return a.map(x=>`<option ${x===sel?'selected':''}>${esc(x)}</option>`).join('')}
+function entry(){const brands=(S.brands[f.oil]||[]);
+ const today=S.tx.filter(t=>t.d===f.date).slice().reverse();
+ return `<div class="card"><h2>New entry</h2>
+ <div class="row"><div><label>Date</label><input type="date" value="${f.date}" onchange="f.date=this.value;render()"></div>
+ <div><label>Type</label><select id="et"><option value="P">Production (add stock)</option><option value="S">Sale / Boxes going out</option></select></div></div><br>
+ <div class="row"><div><label>Search oil</label><input id="eq" placeholder="type: sun, ground..." oninput="f.q=this.value;pickOil()" value="${esc(f.q)}"></div>
+ <div><label>Oil</label><select id="eo" onchange="f.oil=this.value;f.brand='';render()">${opts(['-- select --'].concat(filterOils()),f.oil)}</select></div>
+ <div><label>Brand</label><select id="eb" onchange="f.brand=this.value;render()">${opts(['-- select --'].concat(brands),f.brand)}</select></div>
+ <div><label>Size</label><select id="es">${opts(S.sizes)}</select></div>
+ <div><label>Boxes</label><input id="en" type="number" min="1" placeholder="0"></div></div>
+ ${f.oil&&!brands.length?`<p class="neg">No brands for ${esc(f.oil)} yet.${me.role==='admin'?' Add them in Masters.':' Ask admin to add.'}</p>`:''}
+ ${f.oil?`<p>${brands.map(b=>`<span class="chip" style="cursor:pointer" onclick="f.brand='${esc(b).replace(/'/g,'')}';render()">${esc(b)}</span>`).join('')}</p>`:''}
+ <button class="btn p" onclick="addTx()">Save entry</button>${msg?`<div class="msg">${esc(msg)}</div>`:''}</div>
+ <div class="card"><h2>Entries on ${f.date}</h2><div class="wrap"><table><thead><tr><th>Oil</th><th>Brand</th><th>Size</th><th>Type</th><th>Boxes</th><th>By</th><th></th></tr></thead><tbody>
+ ${today.map(t=>`<tr><td>${esc(t.o)}</td><td>${esc(t.b)}</td><td>${esc(t.s)}</td><td class="${t.k==='P'?'pos':'neg'}">${t.k==='P'?'Production':'Sale'}</td><td>${t.n}</td><td>${esc(t.by)}</td><td>${me.role==='admin'?`<button class="btn d" onclick="delTx('${esc(t.id)}')">x</button>`:''}</td></tr>`).join('')||'<tr><td colspan="7" class="mu">No entries</td></tr>'}</tbody></table></div></div>`}
+function filterOils(){const q=f.q.trim().toLowerCase();return S.oils.filter(o=>!q||o.toLowerCase().includes(q))}
+function pickOil(){const l=filterOils();if(l.length===1&&f.oil!==l[0]){f.oil=l[0];f.brand=''}
+ const pos=document.getElementById('eq').selectionStart;render();const e=document.getElementById('eq');e.focus();e.setSelectionRange(pos,pos)}
+function addTx(){const k=document.getElementById('et').value,s=document.getElementById('es').value,n=parseInt(document.getElementById('en').value,10);
+ if(!f.oil||!f.brand||f.brand==='-- select --'||f.oil==='-- select --'){msg='Select oil and brand';return render()}
+ if(!(n>0)){msg='Enter number of boxes';return render()}
+ if(k==='S'&&stockOf(f.oil,f.brand,s)<n&&!confirm('Stock is only '+stockOf(f.oil,f.brand,s)+' boxes. Save anyway?'))return;
+ api('POST','/api/tx',{d:f.date,o:f.oil,b:f.brand,s,k,n}).then(refresh).catch(e=>alert('Save failed: '+e.message));msg='Saved: '+f.oil+' / '+f.brand+' / '+s+' - '+n+' boxes';render()}
+function delTx(id){if(confirm('Delete this entry?'))api('DELETE','/api/tx/'+id).then(refresh).catch(e=>alert(e.message))}
+function report(){const m=agg(f.date);const q=f.q.trim().toLowerCase();
+ let r=Object.values(m).filter(x=>(f.all||x.open||x.prod||x.sale||x.close)&&(!q||(x.o+' '+x.b).toLowerCase().includes(q)));
+ if(f.all){S.oils.forEach(o=>(S.brands[o]||[]).forEach(b=>S.sizes.forEach(s=>{if(!m[key(o,b,s)]&&(!q||(o+' '+b).toLowerCase().includes(q)))r.push({o,b,s,open:0,prod:0,sale:0,close:0})})))}
+ r.sort((a,b)=>S.oils.indexOf(a.o)-S.oils.indexOf(b.o)||a.b.localeCompare(b.b)||S.sizes.indexOf(a.s)-S.sizes.indexOf(b.s));
+ const t=k=>r.reduce((a,x)=>a+x[k],0);
+ return `<div class="card"><h2>Daily report</h2><div class="row"><div><label>Date</label><input type="date" value="${f.date}" onchange="f.date=this.value;render()"></div>
+ <div><label>Search oil / brand</label><input value="${esc(f.q)}" oninput="f.q=this.value;keep(this)"></div>
+ <div style="flex:0"><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center;white-space:nowrap"><input type="checkbox" style="width:auto" ${f.all?'checked':''} onchange="f.all=this.checked;render()">Show all</label></div></div><br>
+ <div class="wrap"><table><thead><tr><th>Oil</th><th>Brand / Size</th><th>Opening</th><th>Production</th><th>Sale</th><th>Closing</th></tr></thead><tbody>
+ ${r.map(x=>`<tr><td>${esc(x.o)}</td><td>${esc(x.b)} - ${esc(x.s)}</td><td>${x.open}</td><td class="pos">${x.prod||''}</td><td class="neg">${x.sale||''}</td><td><b>${x.close}</b></td></tr>`).join('')||'<tr><td colspan="6" class="mu">No data</td></tr>'}</tbody>
+ <tfoot><tr><td>Total</td><td></td><td>${t('open')}</td><td>${t('prod')}</td><td>${t('sale')}</td><td>${t('close')}</td></tr></tfoot></table></div></div>`}
+function keep(el){const p=el.selectionStart;render();const e=document.querySelector('main input[oninput]');if(e){e.focus();e.setSelectionRange(p,p)}}
+function stock(){const d=todayStr(),m=agg(d),q=f.q.trim().toLowerCase();
+ const oils=S.oils.filter(o=>!q||o.toLowerCase().includes(q)||(S.brands[o]||[]).some(b=>b.toLowerCase().includes(q)));
+ return `<div class="card"><h2>Current stock (boxes)</h2><label>Search oil or brand</label><input value="${esc(f.q)}" oninput="f.q=this.value;keep(this)" placeholder="sunflower"></div>`+
+ oils.map(o=>{const bs=(S.brands[o]||[]).filter(b=>!q||o.toLowerCase().includes(q)||b.toLowerCase().includes(q));
+ return `<div class="card"><h2>${esc(o)}</h2>${bs.length?`<div class="wrap"><table><thead><tr><th>Brand</th><th></th>${S.sizes.map(s=>`<th>${esc(s)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
+ ${bs.map(b=>{const v=S.sizes.map(s=>stockOf(o,b,s));return `<tr><td>${esc(b)}</td><td></td>${v.map(n=>`<td class="${n<0?'neg':n===0?'mu':''}">${n}</td>`).join('')}<td><b>${v.reduce((a,c)=>a+c,0)}</b></td></tr>`}).join('')}</tbody></table></div>`:'<p class="mu">No brands added</p>'}</div>`}).join('')}
+function master(){const sel=f.mo&&S.oils.includes(f.mo)?f.mo:S.oils[0];
+ return `<div class="card"><h2>Brands</h2><div class="row"><div><label>Oil</label><select onchange="f.mo=this.value;render()">${opts(S.oils,sel)}</select></div>
+ <div><label>New brand name</label><input id="nb"></div><div style="flex:0"><button class="btn p" onclick="addB('${esc(sel)}')">Add</button></div></div>
+ <p>${(S.brands[sel]||[]).map(b=>`<span class="chip">${esc(b)} <a href="#" onclick="delB('${esc(sel)}','${esc(b).replace(/'/g,'')}');return false" class="neg">x</a></span>`).join('')||'<span class="mu">No brands yet</span>'}</p></div>
+ <div class="card"><h2>Oil types and sizes</h2><div class="row"><div><label>New oil type</label><input id="no"></div><div style="flex:0"><button class="btn" onclick="addO()">Add oil</button></div>
+ <div><label>New size (e.g. 2 L)</label><input id="ns"></div><div style="flex:0"><button class="btn" onclick="addS()">Add size</button></div></div>
+ <p class="mu">Oils: ${S.oils.map(esc).join(', ')}<br>Sizes: ${S.sizes.map(esc).join(', ')}</p></div>
+ <div class="card"><h2>Users</h2><div class="row"><div><label>Username</label><input id="nu"></div><div><label>Password</label><input id="np"></div>
+ <div><label>Role</label><select id="nr"><option>employee</option><option>admin</option></select></div><div style="flex:0"><button class="btn p" onclick="addU()">Add / update</button></div></div>
+ <div class="wrap"><table><thead><tr><th>User</th><th>Role</th><th></th></tr></thead><tbody>${S.users.map(u=>`<tr><td>${esc(u.u)}</td><td>${u.role}</td><td>${u.u!==me.u?`<button class="btn d" onclick="delU('${esc(u.u).replace(/'/g,'')}')">x</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`}
+function addB(o){const v=document.getElementById('nb').value.trim();if(!v)return;(S.brands[o]=S.brands[o]||[]);if(!S.brands[o].includes(v))S.brands[o].push(v);save();render()}
+function delB(o,b){S.brands[o]=(S.brands[o]||[]).filter(x=>x!==b);save();render()}
+function addO(){const v=document.getElementById('no').value.trim();if(v&&!S.oils.includes(v)){S.oils.push(v);save()}render()}
+function addS(){const v=document.getElementById('ns').value.trim();if(v&&!S.sizes.includes(v)){S.sizes.push(v);save()}render()}
+function addU(){const u=document.getElementById('nu').value.trim(),p=document.getElementById('np').value,role=document.getElementById('nr').value;if(!u||!p)return;
+ api('POST','/api/user',{u,p,role}).then(refresh).catch(e=>alert(e.message))}
+function delU(u){if(confirm('Delete user '+u+'?'))api('DELETE','/api/user/'+encodeURIComponent(u)).then(refresh).catch(e=>alert(e.message))}
+render();refresh();setInterval(()=>{if(me)refresh()},5000);
+</script></body></html>
