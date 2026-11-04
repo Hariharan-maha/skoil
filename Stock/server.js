@@ -21,8 +21,6 @@ const defaults = () => ({
 async function init() {
   if (process.env.DATABASE_URL) {
     const { Pool } = require('pg');
-    const dbUrl = process.env.DATABASE_URL.trim().replace(/^["']|["']$/g, '');
-    console.log('DB host:', new URL(dbUrl).hostname);
     pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3, idleTimeoutMillis: 10000, connectionTimeoutMillis: 20000 });
     pool.on('error', e => console.error('pg pool error', e.message));
     await pool.query('CREATE TABLE IF NOT EXISTS kv (id INT PRIMARY KEY, data JSONB NOT NULL)');
@@ -79,9 +77,9 @@ const server = http.createServer(async (req, res) => {
     if (url === '/api/state' && req.method === 'GET')
       return json(res, 200, { me, oils: DB.oils, sizes: DB.sizes, brands: DB.brands, tx: DB.tx, users: admin ? DB.users.map(a => ({ u: a.u, role: a.role })) : [] });
     if (url === '/api/tx' && req.method === 'POST') {
-      const b = await body(req), n = parseInt(b.n, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.d || '') || !DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !DB.sizes.includes(b.s) || !['P', 'S'].includes(b.k) || !(n > 0)) return json(res, 400, { error: 'Invalid entry' });
-      DB.tx.push({ id: crypto.randomBytes(6).toString('hex'), d: b.d, o: b.o, b: b.b, s: b.s, k: b.k, n, by: me.u, at: Date.now() }); await persist(); return json(res, 200, { ok: 1 });
+      const b = await body(req), n = parseInt(b.n, 10), mrp = Math.round(parseFloat(b.mrp) * 100) / 100;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.d || '') || !DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !DB.sizes.includes(b.s) || !['P', 'S'].includes(b.k) || !['PET', 'Pouch'].includes(b.p) || !(n > 0) || !(mrp > 0 && mrp < 1e6)) return json(res, 400, { error: 'Invalid entry' });
+      DB.tx.push({ id: crypto.randomBytes(6).toString('hex'), d: b.d, o: b.o, b: b.b, p: b.p, s: b.s, k: b.k, n, mrp, by: me.u, at: Date.now() }); await persist(); return json(res, 200, { ok: 1 });
     }
     if (!admin) { if (req.method !== 'GET') return json(res, 403, { error: 'Admin only' }); }
     if (url.startsWith('/api/tx/') && req.method === 'DELETE') { const id = url.slice(8); DB.tx = DB.tx.filter(t => t.id !== id); await persist(); return json(res, 200, { ok: 1 }); }
