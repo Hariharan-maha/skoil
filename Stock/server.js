@@ -15,7 +15,7 @@ const defaults = () => ({
   users: [{ u: 'admin', h: hash('admin123'), role: 'admin' }, { u: 'employee', h: hash('emp123'), role: 'employee' }],
   oils: ['Sunflower Oil', 'Groundnut Oil', 'Gingelly Oil', 'Ghee', 'Coconut Oil', 'Deepam Oil'],
   sizes: ['50 ml', '100 ml', '200 ml', '500 ml', '1 L', '5 L', '15 L'],
-  brands: {}, tx: []
+  brands: {}, tx: [], reqs: []
 });
 // Storage: Postgres when DATABASE_URL is set (Neon), otherwise local db.json file.
 async function init() {
@@ -26,10 +26,12 @@ async function init() {
     await pool.query('CREATE TABLE IF NOT EXISTS kv (id INT PRIMARY KEY, data JSONB NOT NULL)');
     const r = await pool.query('SELECT data FROM kv WHERE id=1');
     DB = r.rows.length ? r.rows[0].data : defaults();
+    DB.reqs = DB.reqs || [];
     if (!r.rows.length) await write();
     console.log('Storage: Postgres');
   } else {
     try { DB = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch { DB = defaults(); }
+    DB.reqs = DB.reqs || [];
     await write();
     console.log('Storage: file ' + FILE);
   }
@@ -75,11 +77,32 @@ const server = http.createServer(async (req, res) => {
     const me = auth(req); if (!me) return json(res, 401, { error: 'Login required' });
     const admin = me.role === 'admin';
     if (url === '/api/state' && req.method === 'GET')
-      return json(res, 200, { me, oils: DB.oils, sizes: DB.sizes, brands: DB.brands, tx: DB.tx, users: admin ? DB.users.map(a => ({ u: a.u, role: a.role })) : [] });
+      return json(res, 200, { me, oils: DB.oils, sizes: DB.sizes, brands: DB.brands, tx: DB.tx, reqs: DB.reqs, users: admin ? DB.users.map(a => ({ u: a.u, role: a.role })) : [] });
     if (url === '/api/tx' && req.method === 'POST') {
       const b = await body(req), n = parseInt(b.n, 10), mrp = Math.round(parseFloat(b.mrp) * 100) / 100;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(b.d || '') || !DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !DB.sizes.includes(b.s) || !['P', 'S'].includes(b.k) || !['PET', 'Pouch'].includes(b.p) || !(n > 0) || !(mrp > 0 && mrp < 1e6)) return json(res, 400, { error: 'Invalid entry' });
       DB.tx.push({ id: crypto.randomBytes(6).toString('hex'), d: b.d, o: b.o, b: b.b, p: b.p, s: b.s, k: b.k, n, mrp, by: me.u, at: Date.now() }); await persist(); return json(res, 200, { ok: 1 });
+    }
+    const office = me.role === 'admin' || me.role === 'office';
+    if (url === '/api/req' && req.method === 'POST') {
+      if (!office) return json(res, 403, { error: 'Only office can send production requests' });
+      const b = await body(req), n = parseInt(b.n, 10);
+      if (!DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !['PET', 'Pouch'].includes(b.p) || !DB.sizes.includes(b.s) || !(n > 0)) return json(res, 400, { error: 'Invalid request' });
+      DB.reqs.push({ id: crypto.randomBytes(6).toString('hex'), o: b.o, b: b.b, p: b.p, s: b.s, n,
+        due: /^\d{4}-\d{2}-\d{2}$/.test(b.due || '') ? b.due : '', pri: b.pri === 'Urgent' ? 'Urgent' : 'Normal',
+        note: str(b.note, 200), by: me.u, at: Date.now(), status: 'open', upd: 0, upby: '' });
+      await persist(); return json(res, 200, { ok: 1 });
+    }
+    if (/^\/api\/req\/[^/]+\/status$/.test(url) && req.method === 'POST') {
+      const r = DB.reqs.find(x => x.id === url.split('/')[3]); if (!r) return json(res, 404, { error: 'Not found' });
+      const st = (await body(req)).status;
+      if (!['open', 'inprogress', 'done', 'cancelled'].includes(st)) return json(res, 400, { error: 'Invalid status' });
+      if ((st === 'cancelled' || st === 'open') && !office) return json(res, 403, { error: 'Office only' });
+      r.status = st; r.upd = Date.now(); r.upby = me.u; await persist(); return json(res, 200, { ok: 1 });
+    }
+    if (url.startsWith('/api/req/') && req.method === 'DELETE') {
+      if (!office) return json(res, 403, { error: 'Office only' });
+      const id = url.slice(9); DB.reqs = DB.reqs.filter(x => x.id !== id); await persist(); return json(res, 200, { ok: 1 });
     }
     if (!admin) { if (req.method !== 'GET') return json(res, 403, { error: 'Admin only' }); }
     if (url.startsWith('/api/tx/') && req.method === 'DELETE') { const id = url.slice(8); DB.tx = DB.tx.filter(t => t.id !== id); await persist(); return json(res, 200, { ok: 1 }); }
@@ -91,7 +114,7 @@ const server = http.createServer(async (req, res) => {
       await persist(); return json(res, 200, { ok: 1 });
     }
     if (url === '/api/user' && req.method === 'POST') {
-      const b = await body(req), u = str(b.u, 40), p = String(b.p || ''), role = b.role === 'admin' ? 'admin' : 'employee';
+      const b = await body(req), u = str(b.u, 40), p = String(b.p || ''), role = ['admin', 'office'].includes(b.role) ? b.role : 'employee';
       if (!u || p.length < 4) return json(res, 400, { error: 'Username and password (min 4 chars) required' });
       const x = DB.users.find(a => a.u === u); if (x) { x.h = hash(p); x.role = role; } else DB.users.push({ u, h: hash(p), role });
       await persist(); return json(res, 200, { ok: 1 });
