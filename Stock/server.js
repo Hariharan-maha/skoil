@@ -21,6 +21,8 @@ const defaults = () => ({
 async function init() {
   if (process.env.DATABASE_URL) {
     const { Pool } = require('pg');
+    const dbUrl = process.env.DATABASE_URL.trim().replace(/^["']|["']$/g, '');
+    console.log('DB host:', new URL(dbUrl).hostname);
     pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3, idleTimeoutMillis: 10000, connectionTimeoutMillis: 20000 });
     pool.on('error', e => console.error('pg pool error', e.message));
     await pool.query('CREATE TABLE IF NOT EXISTS kv (id INT PRIMARY KEY, data JSONB NOT NULL)');
