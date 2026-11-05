@@ -80,14 +80,14 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { me, oils: DB.oils, sizes: DB.sizes, brands: DB.brands, tx: DB.tx, reqs: DB.reqs, users: admin ? DB.users.map(a => ({ u: a.u, role: a.role })) : [] });
     if (url === '/api/tx' && req.method === 'POST') {
       const b = await body(req), n = parseInt(b.n, 10), mrp = Math.round(parseFloat(b.mrp) * 100) / 100;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.d || '') || !DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !DB.sizes.includes(b.s) || !['P', 'S'].includes(b.k) || !['PET', 'Pouch', 'Tin'].includes(b.p) || !(n > 0) || !(mrp > 0 && mrp < 1e6)) return json(res, 400, { error: 'Invalid entry' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.d || '') || !DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !DB.sizes.includes(b.s) || !['P', 'S'].includes(b.k) || !['PET', 'Pouch', 'Tin'].includes(b.p) || (b.p === 'Tin') !== (b.s === '15 L') || !(n > 0) || !(mrp > 0 && mrp < 1e6)) return json(res, 400, { error: 'Invalid entry' });
       DB.tx.push({ id: crypto.randomBytes(6).toString('hex'), d: b.d, o: b.o, b: b.b, p: b.p, s: b.s, k: b.k, n, mrp, by: me.u, at: Date.now() }); await persist(); return json(res, 200, { ok: 1 });
     }
     const office = me.role === 'admin' || me.role === 'office';
     if (url === '/api/req' && req.method === 'POST') {
       if (!office) return json(res, 403, { error: 'Only office can send production instructions' });
       const b = await body(req), n = parseInt(b.n, 10);
-      if (!DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !['PET', 'Pouch', 'Tin'].includes(b.p) || !DB.sizes.includes(b.s) || !(n > 0)) return json(res, 400, { error: 'Invalid instruction' });
+      if (!DB.oils.includes(b.o) || !(DB.brands[b.o] || []).includes(b.b) || !['PET', 'Pouch', 'Tin'].includes(b.p) || (b.p === 'Tin') !== (b.s === '15 L') || !DB.sizes.includes(b.s) || !(n > 0)) return json(res, 400, { error: 'Invalid instruction' });
       DB.reqs.push({ id: crypto.randomBytes(6).toString('hex'), o: b.o, b: b.b, p: b.p, s: b.s, n,
         due: /^\d{4}-\d{2}-\d{2}$/.test(b.due || '') ? b.due : '', pri: b.pri === 'Urgent' ? 'Urgent' : 'Normal',
         note: str(b.note, 200), by: me.u, at: Date.now(), status: 'open', upd: 0, upby: '' });
