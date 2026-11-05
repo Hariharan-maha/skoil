@@ -45,7 +45,10 @@ let S={users:[],oils:[],sizes:[],brands:{},tx:[],reqs:[]};
 let me=null,tab='dash',msg='',f={date:todayStr(),q:'',all:false,oil:'',brand:'',pack:'PET',size:'',n:'',mrp:'',type:'P',pk:'',r:{o:'',b:'',p:'PET',s:'',n:'',due:'',pri:'Normal',note:''}};
 const PACKS=['PET','Pouch','Tin'];
 const key=(o,b,p,s)=>o+'|'+b+'|'+p+'|'+s;
-const curSize=()=>S.sizes.includes(f.size)?f.size:S.sizes[0];
+const TIN_SIZE='15 L';
+const okSize=(p,s)=>(p==='Tin')===(s===TIN_SIZE);
+const sizesFor=p=>S.sizes.filter(s=>okSize(p,s));
+const curSize=()=>{const l=sizesFor(f.pack);return l.includes(f.size)?f.size:(l[0]||'')};
 function agg(date){
  const m={};
  const get=(t)=>{const p=t.p||'PET';const k=key(t.o,t.b,p,t.s);return m[k]||(m[k]={o:t.o,b:t.b,p,s:t.s,open:0,prod:0,sale:0,close:0})};
@@ -77,20 +80,20 @@ function reqCard(){const o=openReqs();if(!o.length)return '';
  return `<div class="card" style="border-color:var(--ac)"><h2>Production instructions from office (${o.length} pending)</h2><div class="wrap"><table><thead><tr><th>Item</th><th>Pack / Size</th><th>Need (boxes)</th><th>Done so far</th><th>Needed by</th></tr></thead><tbody>
  ${l.map(r=>`<tr><td>${r.pri==='Urgent'?'<b class="neg">URGENT</b> ':''}${esc(r.o)} - ${esc(r.b)}</td><td>${r.p} ${esc(r.s)}</td><td><b>${r.n}</b></td><td class="${reqDone(r)>=r.n?'pos':''}">${reqDone(r)}</td><td>${esc(r.due||'')}</td></tr>`).join('')}</tbody></table></div>
  <p><button class="btn p" onclick="tab='req';render()">Open Instructions</button></p></div>`}
-function sendReq(){const R=f.r,s=S.sizes.includes(R.s)?R.s:S.sizes[0],n=parseInt(R.n,10);
+function sendReq(){const R=f.r,rl=sizesFor(R.p),s=rl.includes(R.s)?R.s:(rl[0]||''),n=parseInt(R.n,10);
  if(!R.o||!R.b||R.o==='-- select --'||R.b==='-- select --'){msg='Select oil and brand';return render()}
  if(!(n>0)){msg='Enter boxes needed';return render()}
  api('POST','/api/req',{o:R.o,b:R.b,p:R.p,s,n,due:R.due,pri:R.pri,note:R.note}).then(()=>{msg='Instruction sent to production team';f.r.n='';f.r.note='';return refresh()}).then(()=>render()).catch(e=>alert(e.message))}
 function reqAct(id,st){api('POST','/api/req/'+id+'/status',{status:st}).then(refresh).catch(e=>alert(e.message))}
 function reqDel(id){if(confirm('Delete this instruction?'))api('DELETE','/api/req/'+id).then(refresh).catch(e=>alert(e.message))}
-function req(){const R=f.r,brands=S.brands[R.o]||[],size=S.sizes.includes(R.s)?R.s:S.sizes[0];
+function req(){const R=f.r,brands=S.brands[R.o]||[],rl=sizesFor(R.p),size=rl.includes(R.s)?R.s:(rl[0]||'');
  const live=r=>r.status==='open'||r.status==='inprogress';
  const list=S.reqs.slice().sort((a,b)=>(live(b)-live(a))||(live(a)&&a.pri!==b.pri?(a.pri==='Urgent'?-1:1):0)||b.at-a.at).slice(0,60);
  const form=isOff()?`<div class="card"><h2>Send production instruction</h2>
  <div class="row"><div><label>Oil</label><select onchange="f.r.o=this.value;f.r.b='';render()">${opts(['-- select --'].concat(S.oils),R.o)}</select></div>
  <div><label>Brand</label><select onchange="f.r.b=this.value">${opts(['-- select --'].concat(brands),R.b)}</select></div>
- <div><label>Pack</label><select onchange="f.r.p=this.value">${opts(PACKS,R.p)}</select></div>
- <div><label>Size</label><select onchange="f.r.s=this.value">${opts(S.sizes,size)}</select></div></div><br>
+ <div><label>Pack</label><select onchange="f.r.p=this.value;f.r.s='';render()">${opts(PACKS,R.p)}</select></div>
+ <div><label>Size</label><select onchange="f.r.s=this.value">${opts(sizesFor(R.p),size)}</select></div></div><br>
  <div class="row"><div><label>Boxes needed</label><input type="number" min="1" value="${esc(R.n)}" oninput="f.r.n=this.value"></div>
  <div><label>Needed by</label><input type="date" value="${R.due}" onchange="f.r.due=this.value"></div>
  <div><label>Priority</label><select onchange="f.r.pri=this.value">${opts(['Normal','Urgent'],R.pri)}</select></div>
@@ -110,7 +113,7 @@ function dash(){const d=todayStr(),m=agg(d),r=Object.values(m);const sum=k=>r.re
  <div class="card"><h2>By oil and pack</h2><div class="wrap"><table><thead><tr><th>Oil</th><th>Pack</th><th>Opening</th><th>Production</th><th>Sale</th><th>Closing</th></tr></thead><tbody>
  ${byOil.map(x=>`<tr><td>${esc(x.o)}</td><td>${x.p}</td><td>${x.open}</td><td>${x.prod}</td><td>${x.sale}</td><td><b>${x.close}</b></td></tr>`).join('')||'<tr><td colspan="6" class="mu">No data yet</td></tr>'}</tbody></table></div></div>`}
 function opts(a,sel){return a.map(x=>`<option ${x===sel?'selected':''}>${esc(x)}</option>`).join('')}
-function selChange(){f.mrp=lastMrp(f.oil,f.brand,f.pack,curSize())||'';render()}
+function selChange(){f.size=curSize();f.mrp=lastMrp(f.oil,f.brand,f.pack,curSize())||'';render()}
 function entry(){const brands=(S.brands[f.oil]||[]);const size=curSize();
  const today=S.tx.filter(t=>t.d===f.date).slice().reverse();
  return `<div class="card"><h2>New entry</h2>
@@ -120,7 +123,7 @@ function entry(){const brands=(S.brands[f.oil]||[]);const size=curSize();
  <div><label>Oil</label><select id="eo" onchange="f.oil=this.value;f.brand='';selChange()">${opts(['-- select --'].concat(filterOils()),f.oil)}</select></div>
  <div><label>Brand</label><select id="eb" onchange="f.brand=this.value;selChange()">${opts(['-- select --'].concat(brands),f.brand)}</select></div></div><br>
  <div class="row"><div><label>Pack</label><select id="ep" onchange="f.pack=this.value;selChange()">${opts(PACKS,f.pack)}</select></div>
- <div><label>Size</label><select id="es" onchange="f.size=this.value;selChange()">${opts(S.sizes,size)}</select></div>
+ <div><label>Size</label><select id="es" onchange="f.size=this.value;selChange()">${opts(sizesFor(f.pack),size)}</select></div>
  <div><label>Boxes</label><input id="en" type="number" min="1" placeholder="0" value="${esc(f.n)}" oninput="f.n=this.value"></div>
  <div><label>MRP (Rs per piece)</label><input id="em" type="number" min="0" step="0.01" placeholder="0.00" value="${esc(f.mrp)}" oninput="f.mrp=this.value"></div></div>
  ${f.oil&&!brands.length?`<p class="neg">No brands for ${esc(f.oil)} yet.${me.role==='admin'?' Add them in Masters.':' Ask admin to add.'}</p>`:''}
@@ -143,7 +146,7 @@ function report(){const m=agg(f.date);const q=f.q.trim().toLowerCase();
  const mrp={};S.tx.forEach(t=>{if(t.mrp)mrp[key(t.o,t.b,t.p||'PET',t.s)]=t.mrp});
  const okq=x=>(!q||(x.o+' '+x.b).toLowerCase().includes(q))&&(!f.pk||x.p===f.pk);
  let r=Object.values(m).filter(x=>(f.all||x.open||x.prod||x.sale||x.close)&&okq(x));
- if(f.all){S.oils.forEach(o=>(S.brands[o]||[]).forEach(b=>PACKS.forEach(p=>S.sizes.forEach(s=>{const x={o,b,p,s,open:0,prod:0,sale:0,close:0};if(!m[key(o,b,p,s)]&&okq(x))r.push(x)}))))}
+ if(f.all){S.oils.forEach(o=>(S.brands[o]||[]).forEach(b=>PACKS.forEach(p=>sizesFor(p).forEach(s=>{const x={o,b,p,s,open:0,prod:0,sale:0,close:0};if(!m[key(o,b,p,s)]&&okq(x))r.push(x)}))))}
  r.sort((a,b)=>S.oils.indexOf(a.o)-S.oils.indexOf(b.o)||a.b.localeCompare(b.b)||PACKS.indexOf(a.p)-PACKS.indexOf(b.p)||S.sizes.indexOf(a.s)-S.sizes.indexOf(b.s));
  const t=k=>r.reduce((a,x)=>a+x[k],0);
  return `<div class="card"><h2>Daily report</h2><div class="row"><div><label>Date</label><input type="date" value="${f.date}" onchange="f.date=this.value;render()"></div>
@@ -159,7 +162,7 @@ function stock(){const q=f.q.trim().toLowerCase();
  return `<div class="card"><h2>Current stock (boxes)</h2><label>Search oil or brand</label><input value="${esc(f.q)}" oninput="f.q=this.value;keep(this)" placeholder="sunflower"></div>`+
  oils.map(o=>{const bs=(S.brands[o]||[]).filter(b=>!q||o.toLowerCase().includes(q)||b.toLowerCase().includes(q));
  return `<div class="card"><h2>${esc(o)}</h2>${bs.length?`<div class="wrap"><table><thead><tr><th>Brand</th><th>Pack</th>${S.sizes.map(s=>`<th>${esc(s)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
- ${bs.map(b=>PACKS.map(p=>{const v=S.sizes.map(s=>stockOf(o,b,p,s));return `<tr><td>${esc(b)}</td><td>${p}</td>${v.map(n=>`<td class="${n<0?'neg':n===0?'mu':''}">${n}</td>`).join('')}<td><b>${v.reduce((a,c)=>a+c,0)}</b></td></tr>`}).join('')).join('')}</tbody></table></div>`:'<p class="mu">No brands added</p>'}</div>`}).join('')}
+ ${bs.map(b=>PACKS.map(p=>{const v=S.sizes.map(s=>okSize(p,s)?stockOf(o,b,p,s):null);return `<tr><td>${esc(b)}</td><td>${p}</td>${v.map(n=>n===null?'<td class="mu">-</td>':`<td class="${n<0?'neg':n===0?'mu':''}">${n}</td>`).join('')}<td><b>${v.reduce((a,c)=>a+(c||0),0)}</b></td></tr>`}).join('')).join('')}</tbody></table></div>`:'<p class="mu">No brands added</p>'}</div>`}).join('')}
 function master(){const sel=f.mo&&S.oils.includes(f.mo)?f.mo:S.oils[0];
  return `<div class="card"><h2>Brands</h2><div class="row"><div><label>Oil</label><select onchange="f.mo=this.value;render()">${opts(S.oils,sel)}</select></div>
  <div><label>New brand name</label><input id="nb"></div><div style="flex:0"><button class="btn p" onclick="addB('${esc(sel)}')">Add</button></div></div>
